@@ -1,0 +1,32 @@
+body {
+  font-family: Arial, sans-serif;
+  max-width: 600px;
+  margin: 2rem auto;
+  padding: 1rem;
+  line-height: 1.5;
+}
+header nav a {
+  margin-right: 1rem;
+  text-decoration: none;
+  color: #333;
+}
+header nav a:hover {
+  text-decoration: underline;
+}
+.error {
+  color: red;
+  margin-bottom: 1rem;
+}
+form {
+  margin-bottom: 1rem;
+}
+ul {
+  list-style: none;
+  padding: 0;
+}
+ul li {
+  margin-bottom: 0.5rem;
+}
+button {
+  margin-left: 0.5rem;
+}

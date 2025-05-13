@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Мои задачи{% endblock %}
+{% block content %}
+<h1>Задачи</h1>
+
+<form method="post">
+  <input name="title" placeholder="Новая задача" required>
+  <input name="due_date" type="date">
+  <button type="submit">Добавить</button>
+</form>
+
+<ul>
+  {% for task in tasks %}
+    <li>
+      {{ task.due_date }} — {{ task.title }}
+      {% if task.completed %}(✔){% endif %}
+      <!-- Форма отметки -->
+      <form method="post" action="/tasks/{{ task.id }}/complete" style="display:inline;">
+        <input type="hidden" name="completed" value="{{ not task.completed }}">
+        <button type="submit">
+          {% if task.completed %}Отметить невыполненным{% else %}Отметить выполненным{% endif %}
+        </button>
+      </form>
+    </li>
+  {% endfor %}
+</ul>
+
+<h2>История</h2>
+<ul>
+  {% for entry in history %}
+    <li>{{ entry.timestamp }} — {{ entry.action }}</li>
+  {% else %}
+    <li>Нет записей истории.</li>
+  {% endfor %}
+</ul>
+{% endblock %}

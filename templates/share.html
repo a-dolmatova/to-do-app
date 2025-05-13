@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Список задач на {{ date }}{% endblock %}
+{% block content %}
+<h1>Задачи на {{ date }}</h1>
+<ul>
+  {% for task in tasks %}
+    <li>
+      {{ task.title }} {% if task.completed %}(✔){% endif %}
+    </li>
+  {% else %}
+    <li>Нет задач.</li>
+  {% endfor %}
+</ul>
+{% endblock %}

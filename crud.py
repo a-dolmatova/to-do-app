@@ -4,7 +4,7 @@ from fastapi import HTTPException
 
 from models import User, Task, History
 from schemas import UserCreate, TaskCreate
-from auth import get_password_hash
+import auth
 
 
 def get_user(db: Session, user_id: int):
@@ -14,11 +14,11 @@ def get_user_by_email(db: Session, email: str):
     return db.query(User).filter(User.email == email).first()
 
 def create_user(db: Session, user: UserCreate):
-    hashed_password = get_password_hash(user.password)
-    db_user = User(name=user.name, email=str(user.email), age=user.age, hashed_password=hashed_password)
+    hashed_password = auth.get_password_hash(user.password)
+    db_user = User(name=user.name, email=str(user.email),
+                   age=user.age, hashed_password=hashed_password)
     db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
+    db.flush()
     return db_user
 
 def create_task(db: Session, user: User, task: TaskCreate):

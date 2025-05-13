@@ -1,12 +1,14 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Request, Depends, HTTPException, status, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta, date
 
-from schemas import Token, UserResponse, UserCreate, UserDetail, TaskResponse, TaskCreate, HistoryResponse
+from schemas import Token, UserCreate, TaskCreate
 from models import User, Task
-from crud import (get_user_by_email, create_user, create_task, get_tasks, get_history, log_action,
-                  get_tasks_by_date, update_task_due_date)
+from crud import get_user_by_email, create_user, create_task, get_tasks, get_history, log_action, get_tasks_by_date
 import auth
 from database import engine, Base
 
@@ -14,8 +16,11 @@ from database import engine, Base
 Base.metadata.create_all(bind=engine)
 app = FastAPI()
 
+templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Авторизация
+
+# Токен
 @app.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(auth.get_db)):
     user = get_user_by_email(db, form_data.username)
@@ -27,70 +32,110 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
                                             expires_delta=timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES))
     return {"access_token": access_token, "token_type": "bearer"}
 
-# Регистрация
-@app.post("/users/", response_model=UserResponse)
-def register(user: UserCreate, db: Session = Depends(auth.get_db)):
-    if get_user_by_email(db, str(user.email)):
-        raise HTTPException(status_code=400, detail="Введенный email уже зарегистрирован.")
-    new_user = create_user(db, user)
-    log_action(db, new_user, "Регистрация")
-    return new_user
 
-# Информация о текущем пользователе
-@app.get("/users/me", response_model=UserDetail)
-async def read_users_me(current_user: User = Depends(auth.get_current_user), db: Session = Depends(auth.get_db)):
+# Регистрация пользователя
+@app.get("/register", response_class=HTMLResponse)
+def register_page(request: Request):
+    return templates.TemplateResponse("register.html", {"request": request})
+
+@app.post("/register")
+def register_action(request: Request,
+                    name: str = Form(...),
+                    email: str = Form(...),
+                    age: int = Form(...),
+                    password: str = Form(...),
+                    db: Session = Depends(auth.get_db)):
+    if get_user_by_email(db, email):
+        return templates.TemplateResponse("register.html", {"request": request, "error": "Email уже зарегистрирован"})
+    try:
+        user = create_user(db, UserCreate(name=name, email=email, age=age, password=password))
+        log_action(db, user, "Регистрация.")
+        db.commit()
+    except Exception:
+        db.rollback()
+        return templates.TemplateResponse("register.html", {"request": request, "error": "Ошибка при регистрации."})
+    return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+
+
+# Вход и выход в аккаунт
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
+
+@app.post("/login")
+def login_action(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(auth.get_db)
+):
+    user = get_user_by_email(db, email)
+    if not user or not auth.verify_password(password, user.hashed_password):
+        return templates.TemplateResponse(
+            "login.html", {"request": request, "error": "Неверные учетные данные"}
+        )
+    token = auth.create_access_token({"sub": str(user.id)})
+    response = RedirectResponse(url="/tasks", status_code=status.HTTP_302_FOUND)
+    response.set_cookie(
+        key="Authorization",
+        value=f"Bearer {token}",
+        path="/",
+        httponly=True,
+    )
+    return response
+@app.get("/logout")
+def logout():
+    response = RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+    response.delete_cookie("Authorization")
+    return response
+
+
+# Задачи
+@app.get("/tasks", response_class=HTMLResponse)
+def show_tasks(request: Request,
+               current_user: User = Depends(auth.get_current_user),
+               db: Session = Depends(auth.get_db)):
     tasks = get_tasks(db, current_user)
     history = get_history(db, current_user)
-    user_schema = UserResponse.model_validate(current_user)
-    base = user_schema.model_dump()
-    return {**base, "tasks": tasks, "history": history}
+    return templates.TemplateResponse("tasks.html",
+                                      {"request": request,
+                                       "tasks": tasks,
+                                       "history": history})
 
-# CRUD-операции (Create, Read, Update и Delete)
-@app.post("/tasks/", response_model=TaskResponse)
-def create_task_for_user(task: TaskCreate,
-                         current_user: User = Depends(auth.get_current_user),
-                         db: Session = Depends(auth.get_db)):
-    db_task = create_task(db, current_user, task)
-    log_action(db, current_user, f"Создана задача: {db_task.title}")
-    return db_task
+@app.post("/tasks")
+def add_task(request: Request,
+             title: str = Form(...),
+             due_date: date = Form(None),
+             current_user: User = Depends(auth.get_current_user),
+             db: Session = Depends(auth.get_db)):
+    create_task(db, current_user, TaskCreate(title=title, due_date=due_date))
+    log_action(db, current_user, f"Создана задача: {title}.")
+    return RedirectResponse(url="/tasks", status_code=status.HTTP_302_FOUND)
 
-@app.get("/tasks/", response_model=list[TaskResponse])
-def read_tasks(current_user: User = Depends(auth.get_current_user),
-               db: Session = Depends(auth.get_db)):
-    return get_tasks(db, current_user)
-
-@app.get("/tasks/{task_date}", response_model=list[TaskResponse])
-def read_tasks_by_date(task_date: date,
-                        current_user: User = Depends(auth.get_current_user),
-                        db: Session = Depends(auth.get_db)):
-    return get_tasks_by_date(db, current_user.id, task_date)
-
-@app.patch("/tasks/{task_id}/complete", response_model=TaskResponse)
-def update_task_complete(task_id: int,
-                        completed: bool,
-                        current_user: User = Depends(auth.get_current_user),
-                        db: Session = Depends(auth.get_db)):
-    db_task = db.query(Task).filter(Task.id == task_id, Task.user_id == current_user.id).first()
-    if not db_task:
-        raise HTTPException(404, "Задача не найдена.")
-    db_task.completed = completed
+@app.post("/tasks/{task_id}/complete")
+def complete_task(task_id: int,
+                  completed: bool = Form(...),
+                  current_user: User = Depends(auth.get_current_user),
+                  db: Session = Depends(auth.get_db)):
+    task = db.query(Task).get(task_id)
+    if not task or task.user_id != current_user.id:
+        raise HTTPException(404, "Задача не найдена")
+    task.completed = completed
     db.commit()
-    db.refresh(db_task)
-    return db_task
+    db.refresh(task)
+    action = f"Задача '{task.title}' " + ("отмечена выполненной" if completed else "отмечена невыполненной")
+    log_action(db, current_user, action)
+    return RedirectResponse(url="/tasks", status_code=status.HTTP_302_FOUND)
 
-@app.put("/tasks/{task_id}", response_model=TaskResponse)
-def update_task_day(task_id: int,
-                completed: bool,
-                current_user: User = Depends(auth.get_current_user),
-                db: Session = Depends(auth.get_db)):
-    return update_task_due_date(db, task_id, current_user.id, completed)
 
-@app.get("/history/", response_model=list[HistoryResponse])
-def get_user_history(current_user: User = Depends(auth.get_current_user),
-                     db: Session = Depends(auth.get_db),):
-    return get_history(db, current_user)
-
-# Публичная ссылка на список задач на конкретный день
-@app.get("/share/tasks/{user_id}/{task_date}", response_model=list[TaskResponse])
-def shared_tasks(user_id: int, task_date: date, db: Session = Depends(auth.get_db)):
-    return get_tasks_by_date(db, user_id=user_id, day=task_date)
+# Ссылка на список задач на конкретный день
+@app.get("/share/{user_id}/{task_date}", response_class=HTMLResponse)
+def share(request: Request,
+          user_id: int,
+          task_date: date,
+          db: Session = Depends(auth.get_db)):
+    tasks = get_tasks_by_date(db, user_id, task_date)
+    return templates.TemplateResponse("share.html",
+                                      {"request": request,
+                                       "tasks": tasks,
+                                       "date": task_date})
