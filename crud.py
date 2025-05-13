@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
-from datetime import date
+from datetime import date, timedelta
+from fastapi import HTTPException
 
 from models import User, Task, History
 from schemas import UserCreate, TaskCreate
@@ -38,6 +39,16 @@ def get_tasks(db: Session, user: User):
 
 def get_tasks_by_date(db: Session, user_id: int, day: date):
     return db.query(Task).filter(Task.user_id == user_id, Task.due_date == day).all()
+
+def update_task_due_date(db: Session, task_id: int, user_id: int, completed: bool):
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    if not completed:
+        task.due_date = date.today() + timedelta(days=1)
+    db.commit()
+    db.refresh(task)
+    return task
 
 def log_action(db: Session, user: User, action: str):
     entry = History(user_id=user.id, action=action)
